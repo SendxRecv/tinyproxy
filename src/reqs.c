@@ -138,6 +138,8 @@ static void free_request_struct (struct request_s *request)
                 safefree (request->host);
         if (request->path)
                 safefree (request->path);
+        if (request->hostname)
+                safefree (request->hostname);
 
         safefree (request);
 }
@@ -203,6 +205,9 @@ static int extract_url (const char *url, int default_port,
 {
         char *p;
         int port;
+        int status;
+        char portstr[6];
+        struct addrinfo hints, *res, *resptr;
 
         /* Split the URL on the slash to separate host from path */
         p = strchr (url, '/');
@@ -238,6 +243,33 @@ static int extract_url (const char *url, int default_port,
                 *p = '\0';
         }
 
+        memset (&hints, 0, sizeof (struct addrinfo));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        snprintf (portstr, sizeof (portstr), "%d", port);
+
+        status = getaddrinfo (request->host, portstr, &hints, &res);
+        if (status != 0) {
+                return -1;
+        } else {
+                for (resptr = res; resptr != NULL; resptr = resptr->ai_next) {
+                        if (resptr->ai_family == AF_INET) {
+                                char addr[INET_ADDRSTRLEN];
+                                int len = sizeof(addr);
+                                struct sockaddr_in *ipv4 = (struct sockaddr_in *)resptr->ai_addr;
+
+                                inet_ntop(resptr->ai_family, &(ipv4->sin_addr), addr, sizeof(addr));
+
+                                request->hostname = request->host;
+                                request->host = (char *) safemalloc (len + 1);
+                                memcpy(request->host, addr, len);
+                                request->host[len] = '\0';
+                        }
+                }
+                freeaddrinfo(res);
+        }
+
         return 0;
 
 ERROR_EXIT:
@@ -264,7 +296,7 @@ establish_http_connection (struct conn_s *connptr, struct request_s *request)
         else
                 portbuff[0] = '\0';
 
-        if (inet_pton(AF_INET6, request->host, dst) > 0) {
+        if (inet_pton(AF_INET6, request->hostname, dst) > 0) {
                 /* host is an IPv6 address literal, so surround it with
                  * [] */
                 return write_message (connptr->server_fd,
@@ -274,7 +306,7 @@ establish_http_connection (struct conn_s *connptr, struct request_s *request)
                                       request->method, request->path,
                                       connptr->protocol.major != 1 ? 0 :
                                                connptr->protocol.minor,
-                                      request->host, portbuff);
+                                      request->hostname, portbuff);
         } else if (connptr->upstream_proxy &&
                    connptr->upstream_proxy->type == PT_HTTP &&
                    connptr->upstream_proxy->ua.authstr) {
@@ -286,7 +318,7 @@ establish_http_connection (struct conn_s *connptr, struct request_s *request)
                                       request->method, request->path,
                                       connptr->protocol.major != 1 ? 0 :
                                                connptr->protocol.minor,
-                                      request->host, portbuff,
+                                      request->hostname, portbuff,
                                       connptr->upstream_proxy->ua.authstr);
         } else {
                 return write_message (connptr->server_fd,
@@ -296,7 +328,7 @@ establish_http_connection (struct conn_s *connptr, struct request_s *request)
                                       request->method, request->path,
                                       connptr->protocol.major != 1 ? 0 :
                                                connptr->protocol.minor,
-                                      request->host, portbuff);
+                                      request->hostname, portbuff);
         }
 }
 

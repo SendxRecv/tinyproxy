@@ -40,6 +40,7 @@ struct request_s {
         char *protocol;
 
         char *host;
+        char *hostname;
         uint16_t port;
 
         char *path;
